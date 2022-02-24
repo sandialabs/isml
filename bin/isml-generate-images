@@ -1,0 +1,95 @@
+#!/usr/bin/env python
+
+import argparse
+import glob
+import itertools
+import logging
+import os
+import re
+import sys
+
+import numpy
+import toyplot
+import toyplot.bitmap
+import toyplot.color
+
+import isml
+
+
+parser = argparse.ArgumentParser("Generate images from raw ISML simulation data.")
+parser.add_argument("--partitions", nargs=3, type=int, default=[1, 1, 1], help="Organization of per-processor partitions.  Default: %(default)s")
+parser.add_argument("--skip-anomalies", action="store_true", help="Skip generating images for simulation anomalies.")
+parser.add_argument("--skip-decisions", action="store_true", help="Skip generating images for analysis decisions.")
+parser.add_argument("--skip-features", action="store_true", help="Skip generating images for simulation features.")
+parser.add_argument("--skip-measures", action="store_true", help="Skip generating images for analysis measures.")
+parser.add_argument("directory", help="Top-level directory containing raw ISML simulation data.")
+arguments = parser.parse_args()
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger()
+log.name = os.path.basename(sys.argv[0])
+
+analysis_path = arguments.directory
+anomalies_path = os.path.join(analysis_path, "anomalies")
+features_path = os.path.join(analysis_path, "features")
+measures_path = os.path.join(analysis_path, "measures")
+decisions_path = os.path.join(analysis_path, "decisions")
+
+linear_colormap = toyplot.color.linear.map("Blackbody")
+diverging_colormap = toyplot.color.brewer.map("BlueRed")
+grayscale_colormap = toyplot.color.brewer.map("Greys", domain_min=0, domain_max=1)
+
+paths = []
+if not arguments.skip_anomalies:
+    paths += glob.glob(os.path.join(anomalies_path, "anomaly_*_*.npy"))
+if not arguments.skip_decisions:
+    paths += glob.glob(os.path.join(decisions_path, "decision_*_*.npy"))
+if not arguments.skip_features:
+    paths += glob.glob(os.path.join(features_path, "*_*_*.npy"))
+if not arguments.skip_measures:
+    paths += glob.glob(os.path.join(measures_path, "measure_*_*.npy"))
+paths = sorted(paths)
+
+paths = [list(group) for key, group in itertools.groupby(paths, lambda path: re.match(r"(.*)_\d{4}.npy", path).group(1))]
+
+# TODO: handle the case where there are multiple files (processors) per timestep
+# For each group of files to be converted ...
+for group in paths:
+    group_path = group[0]
+    output_path = re.sub(r"_\d{4}.npy", ".png", group_path)
+    log.info("Converting %s => %s", os.path.relpath(group_path), os.path.basename(output_path))
+
+    # Choose a colormap based on filename.
+    if "density" in os.path.basename(group_path):
+        colormap = linear_colormap
+    elif "decision" in os.path.basename(group_path):
+        colormap = grayscale_colormap
+    elif "anomaly" in os.path.basename(group_path):
+        colormap = grayscale_colormap
+    else:
+        colormap = diverging_colormap
+
+    # Load the raw data
+    data = [numpy.load(path) for path in group]
+
+    # Figure-out what the layout of the combined images will be.
+    combined_shape = (data[0].shape[0] * arguments.partitions[0], data[0].shape[1] * arguments.partitions[1], data[0].shape[2] * arguments.partitions[2])
+    partitions = isml.make_partitions(combined_shape, arguments.partitions)
+
+    log.info("Combining %dx%d images %dx%d to create %dx%d image.", data[0].shape[0], data[0].shape[1], arguments.partitions[0], arguments.partitions[1], combined_shape[0], combined_shape[1])
+
+    partition_count = arguments.partitions[0] * arguments.partitions[1] * arguments.partitions[2]
+    if len(data) != partition_count:
+        log.error("Expected %d partitions per timestep, found %d.  Use --partitions to define the correct counts.", partition_count, len(group))
+        exit(1)
+
+    # Combine the raw data.
+    combined = numpy.zeros(combined_shape)
+    for partition, data in zip(partitions, data):
+        combined[partition] = data
+
+    # Assign colors and save the image.
+    image = colormap.colors(combined[::-1,:,:])
+    with open(output_path, "wb") as stream:
+        toyplot.bitmap.to_png(image, stream, bitdepth=16)
+

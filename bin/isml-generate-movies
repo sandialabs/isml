@@ -1,0 +1,34 @@
+#!/usr/bin/env python
+
+import argparse
+import glob
+import logging
+import os
+import sys
+import subprocess
+
+parser = argparse.ArgumentParser("Generate movies from ISML compositions created with Houdini.")
+parser.add_argument("directory", nargs="*", help="Top-level directory containing an ISML composition.")
+arguments = parser.parse_args()
+
+logging.basicConfig(level=logging.INFO)
+log = logging.getLogger()
+log.name = os.path.basename(sys.argv[0])
+
+for analysis_path in arguments.directory:
+    log.info("Generating movie in %s", analysis_path)
+    movie_path = os.path.join(analysis_path, "movie")
+
+    command = [
+        "ffmpeg",
+        "-y",
+        "-f", "image2",
+        "-pattern_type", "glob",
+        "-framerate", "30",
+        "-i", os.path.join(movie_path, "movie_*.png"),
+        "-q", "2",
+        os.path.join(analysis_path, "movie.mp4"),
+        ]
+    log.info(" ".join(command))
+    subprocess.check_call(command)
+

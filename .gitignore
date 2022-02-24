@@ -1,0 +1,15 @@
+.DS_Store
+*.pyc
+*.egg-info
+
+data/*.zip
+data/*/*
+
+docs/_build
+
+experiments/*.zip
+experiments/*/*
+
+movies/backup
+movies/hda/backup
+

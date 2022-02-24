@@ -1,0 +1,25 @@
+#!/usr/bin/env python
+
+import argparse
+import glob
+import logging
+import os
+
+import numpy
+
+import isml
+
+parser = argparse.ArgumentParser("Generate decision summary visualizations from raw ISML experiments.")
+parser.add_argument("directory", help="Top-level directory containing an ISML experiment.")
+arguments = parser.parse_args()
+
+logging.basicConfig(level=logging.DEBUG)
+log = logging.getLogger()
+
+log.info(f"Generating decision summaries for {arguments.directory}")
+
+all_decisions = []
+for path in sorted(glob.glob(os.path.join(arguments.directory, "decisions", "decision_*.npy"))):
+    all_decisions.append(numpy.ravel(numpy.load(path)))
+
+isml.data.write_decision_summary(arguments.directory, all_decisions)

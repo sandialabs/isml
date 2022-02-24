@@ -1,0 +1,34 @@
+#!/usr/bin/env python
+
+import argparse
+import glob
+import logging
+import os
+
+import numpy
+import toyplot
+import toyplot.pdf
+
+import isml.data
+
+parser = argparse.ArgumentParser("Generate anomaly detection summary visualizations from raw ISML experiments.")
+parser.add_argument("data", help="Top-level directory containing data.")
+parser.add_argument("experiment", help="Top-level directory containing experimental results.")
+arguments = parser.parse_args()
+
+logging.basicConfig(level=logging.DEBUG)
+log = logging.getLogger()
+
+log.info("Generating anomaly detection summary for %s", arguments.experiment)
+anomaly_path = os.path.join(arguments.data, "anomalies")
+decision_path = os.path.join(arguments.experiment, "decisions")
+
+all_anomalies = []
+for filename in sorted(glob.glob(os.path.join(anomaly_path, "anomaly_*.npy"))):
+    all_anomalies.append(numpy.load(filename))
+
+all_decisions = []
+for filename in sorted(glob.glob(os.path.join(decision_path, "decision_*.npy"))):
+    all_decisions.append(numpy.load(filename))
+
+isml.data.write_anomaly_summary(arguments.experiment, all_anomalies, all_decisions)
