@@ -3,34 +3,20 @@ import numpy as np
 import os
 
 class Dataset(object):
-    def __init__(self, path, dimensions, features):
-        # MLC NOTE: This function sets up all of the file paths for the input features and
-        # checks that they are valid and contain valid/consistent data. For structured data,
-        # there is a file for each timestep and feature. Since a netCDF file encodes all of this
-        # in a single file, we don't need to set up a matrix of paths to features.
-
+    def __init__(self, dimensions, features):
         self._dimensions = dimensions
-        self._features = features
-        self._netcdf_path = path
+        
+        self._features = []
+        self._paths = []
+        for key, val in features.items():
+            self._features.append(key)
+            self._paths.append(val)
 
-        # MLC NOTE: For netCDF files, we should assume that ground-truth anomalies are included
-        # as a variable instead of as a separate file. The current implementation does not
-        # check for ground-truth anomalies yet.
+        ncdata = nc.Dataset(self._paths[0], "r")
 
-        ncdata = nc.Dataset(path, "r")
-
-        # MLC NOTE: For structured data, the timestep ids are obtained from feature filenames
-        # but for netCDF, we won't be able to obtain them until the file has been opened.
         self._timesteps = [str(i) for i in range(len(ncdata['time']))]
-
-        # MLC NOTE: I'm unsure of what exactly "processes" are so I've just set it to "0000"
-        # as per the other experiments.
         self._processes = ["0000" for s in ncdata['time'][:]]
 
-        # MLC NOTE: For partitioning the active cells for landice, I use the spatial information
-        # from the netCDF file. For the CALI data, the spatial coordinates for nodes are (y1, x1).
-        # Eventually, this will be made more general so that an experiment will pass in a list of
-        # dimensions similar to the list of features.
         self._dim0 = ncdata[self._dimensions[0]][:]
         self._dim1 = ncdata[self._dimensions[1]][:]
         self._coords = np.zeros([len(self._dim0), len(self._dim1), 2])
@@ -44,7 +30,7 @@ class Dataset(object):
         return len(self._timesteps)
 
     def __getitem__(self, index):
-        return self._timesteps[index], self._processes[index], self._netcdf_path, None
+        return self._timesteps[index], self._processes[index], self._paths, None
 
     @property
     def features(self):
@@ -63,14 +49,14 @@ class DataLoader(object):
 
     def __iter__(self):
         for index in range(len(self._dataset)):
-            timestep, process, netcdf_path, anomaly_path = self._dataset[index]
+            timestep, process, netcdf_paths, anomaly_path = self._dataset[index]
 
             features = np.zeros(self._feature_dim)
 
-            ncdata = nc.Dataset(netcdf_path, "r")
             for feature_id in range(len(self._feature_list)):
+                ncdata = nc.Dataset(netcdf_paths[feature_id])
                 features[:,:,feature_id] = ncdata[self._feature_list[feature_id]][index,:,:]
-            ncdata.close()
+                ncdata.close()
 
             anomalies = None
 
