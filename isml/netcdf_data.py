@@ -2,6 +2,8 @@ import netCDF4 as nc
 import numpy as np
 import os
 
+from isml.data import partition as partition_np
+
 class Dataset(object):
     def __init__(self, dimensions, features):
         self._dimensions = dimensions
@@ -126,3 +128,106 @@ def inflate(data, indices, dims):
     for i in range(len(indices)):
         inflated_data[indices[i][:,0], indices[i][:,1], 0] = data[i]
     return inflated_data
+
+def compute_signatures(dimensions, features_of_interest, partition_size, preprocess_fn, signature_fn, postprocess_fn, timesteps_of_interest):
+
+    dataset = Dataset(dimensions, features_of_interest)
+    loader = DataLoader(dataset)
+
+    if timesteps_of_interest is not None:
+        all_timesteps = np.arange(timesteps_of_interest[0], timesteps_of_interest[0]+timesteps_of_interest[1])
+
+    all_signatures = []
+    for timestep, process, features, anomalies in loader:
+        if (timesteps_of_interest is None) or (int(timestep) in all_timesteps):
+            if np.mod(int(timestep), 10) == 0:
+                progress_str = "Processing timestep %d." % (int(timestep))
+                print(progress_str)
+            
+            if len(dimensions) == 3:
+                features = features[:,:,None,:]
+
+            # Split the features array into partitions.
+            counts = (features.shape[0] // partition_size[0], features.shape[1] // partition_size[1], features.shape[2] // partition_size[2])
+            partition_indices, partitions = partition_np(features, counts=counts)
+
+            # Scale features to the range [0, 1].
+            partitions = preprocess_fn(partitions)
+
+            # Convert partitions to signatures.
+            timestep_signatures = signature_fn(partitions)
+
+            # Postprocess signatures.
+            timestep_signatures = postprocess_fn(timestep_signatures)
+            
+            # Keep track of all signatures across time, in case we need them for temporal measures.
+            all_signatures.append(timestep_signatures)
+
+    class Results: pass
+    results = Results()
+    results.all_signatures = all_signatures
+    results.partition_indices = partition_indices
+    results.timesteps_of_interest = timesteps_of_interest
+    results.partition_size = partition_size
+
+    return results
+
+def write_signatures(feature_path, signature_path, data):
+    all_signatures    = data.all_signatures
+    partition_size    = data.partition_size
+    timestep0         = data.timesteps_of_interest[0]
+    num_timesteps     = data.timesteps_of_interest[1]
+    
+    num_signatures = all_signatures[0].shape[-1]
+    num_partitions = all_signatures[0].shape[0]
+
+    os.system("nccopy -V time,time_bnds,lat,lon %s %s" % (feature_path, signature_path))
+
+    with nc.Dataset(signature_path, "r+") as ncdata:
+        # add feature_path to signature file header
+        ncdata.setncattr("feature_path", feature_path)
+        ncdata.setncattr("partition_size_x", partition_size[0])
+        ncdata.setncattr("partition_size_y", partition_size[1])
+        ncdata.setncattr("sampled_timestep0", timestep0)
+        ncdata.setncattr("num_sampled_timesteps", num_timesteps)
+        # add npbnd dimension (length 6)
+        ncdata.createDimension('npbnd', 6)
+        # add pid dimension (length n_partitions)
+        ncdata.createDimension('pid', num_partitions)
+        # add sid dimension (length n_signatures)
+        ncdata.createDimension('sid', num_signatures)
+        # add signatures variables: signatures(time, pid, sid) = [s1, ..., sN]
+        out = ncdata.createVariable('signatures', np.float64, ('time', 'pid', 'sid'))
+        for i in np.arange(timestep0, timestep0+num_timesteps):
+            out[i,:,:] = all_signatures[i-timestep0]
+
+def load_signatures(signature_path):
+
+    class Results: pass
+    results = Results()
+    
+    with nc.Dataset(signature_path, "r") as ncdata:
+        timestep0 = ncdata.getncattr("sampled_timestep0")
+        num_timesteps = ncdata.getncattr("num_sampled_timesteps")
+        timesteps_of_interest = [timestep0, num_timesteps]
+
+        partition_size_x = ncdata.getncattr("partition_size_x")
+        partition_size_y = ncdata.getncattr("partition_size_y")
+        partition_size = [partition_size_x, partition_size_y]
+
+        nlat = ncdata.dimensions['lat'].size
+        nlon = ncdata.dimensions['lon'].size
+
+        counts = (nlat // partition_size_x, nlon // partition_size_y, 1)
+        partition_indices, partitions = partition_np(np.empty((nlat, nlon, 1)), counts=counts)
+
+        all_signatures = []
+        for i in np.arange(timestep0, timestep0+num_timesteps):
+            all_signatures.append(ncdata['signatures'][i,:,:])
+
+        results.all_signatures = all_signatures
+        results.partition_indices = partition_indices
+        results.timesteps_of_interest = timesteps_of_interest
+        results.partition_size = partition_size
+
+    return results
