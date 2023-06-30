@@ -5,8 +5,8 @@ import os
 from isml.data import partition as partition_np
 
 class Dataset(object):
-    def __init__(self, dimensions, features):
-        self._dimensions = dimensions
+    def __init__(self, dimension_strs, features, time_str=None):
+        self._dimension_strs = dimension_strs
         
         self._features = []
         self._paths = []
@@ -16,15 +16,25 @@ class Dataset(object):
 
         ncdata = nc.Dataset(self._paths[0], "r")
 
-        self._timesteps = [str(i) for i in range(len(ncdata['time']))]
-        self._processes = ["0000" for s in ncdata['time'][:]]
+        if time_str is not None:
+            time_dim = time_str
+        else:
+            time_dim = 'time'
 
-        self._dim0 = ncdata[self._dimensions[0]][:]
-        self._dim1 = ncdata[self._dimensions[1]][:]
-        self._coords = np.zeros([len(self._dim0), len(self._dim1), 2])
-        Dim0, Dim1 = np.meshgrid(self._dim0, self._dim1, indexing='ij')
-        self._coords[:,:,0] = Dim0
-        self._coords[:,:,1] = Dim1
+        self._timesteps = [str(i) for i in range(ncdata.dimensions[time_dim].size)]
+        self._processes = ["0000" for s in self._timesteps]
+
+        if self._dimension_strs[0] in ncdata.variables.keys():
+            self._dim0 = ncdata[self._dimension_strs[0]][:]
+            self._dim1 = ncdata[self._dimension_strs[1]][:]
+            self._coords = np.zeros([len(self._dim0), len(self._dim1), 2])
+            Dim0, Dim1 = np.meshgrid(self._dim0, self._dim1, indexing='ij')
+            self._coords[:,:,0] = Dim0
+            self._coords[:,:,1] = Dim1
+
+        self._dimensions = []
+        for s in self._dimension_strs:
+            self._dimensions.append(ncdata.dimensions[s].size)
 
         ncdata.close()
 
@@ -40,13 +50,13 @@ class Dataset(object):
 
     @property
     def dimensions(self):
-        return [len(self._dim0), len(self._dim1)]
+        return self._dimensions
 
 class DataLoader(object):
     def __init__(self, dataset):
         self._dataset = dataset
-        self._feature_list = self._dataset.features
-        self._feature_dim = self._dataset.dimensions
+        self._feature_list = [f for f in self._dataset.features]
+        self._feature_dim = [d for d in self._dataset.dimensions]
         self._feature_dim.append(len(self._feature_list))
 
     def __iter__(self):
@@ -57,7 +67,14 @@ class DataLoader(object):
 
             for feature_id in range(len(self._feature_list)):
                 ncdata = nc.Dataset(netcdf_paths[feature_id])
-                features[:,:,feature_id] = ncdata[self._feature_list[feature_id]][index,:,:]
+                if len(self._dataset.dimensions) == 3:
+                    features[:,:,:,feature_id] = ncdata[self._feature_list[feature_id]][index,:,:,:]
+                elif len(self._dataset.dimensions) == 2:
+                    features[:,:,feature_id] = ncdata[self._feature_list[feature_id]][index,:,:]
+                elif len(self._dataset.dimensions) == 1:
+                    features[:,feature_id] = ncdata[self._feature_list[feature_id]][index,:]
+                else:
+                    raise ValueError("Unsupported number of dimensions.")
                 ncdata.close()
 
             anomalies = None
