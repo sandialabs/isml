@@ -5,7 +5,7 @@ import os
 from isml.data import partition as partition_np
 
 class Dataset(object):
-    def __init__(self, dimension_strs, features, time_str=None):
+    def __init__(self, dimension_strs, features, time_str=None, return_coords=False):
         self._dimension_strs = dimension_strs
         
         self._features = []
@@ -24,7 +24,7 @@ class Dataset(object):
         self._timesteps = [str(i) for i in range(ncdata.dimensions[time_dim].size)]
         self._processes = ["0000" for s in self._timesteps]
 
-        if self._dimension_strs[0] in ncdata.variables.keys():
+        if return_coords and self._dimension_strs[0] in ncdata.variables.keys():
             self._dim0 = ncdata[self._dimension_strs[0]][:]
             self._dim1 = ncdata[self._dimension_strs[1]][:]
             self._coords = np.zeros([len(self._dim0), len(self._dim1), 2])
